@@ -9,20 +9,23 @@ mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
 
 PROFILE_OVERRIDE=""
+MCLK_NDIV=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
+        --mclk-ndiv=*) MCLK_NDIV="${arg#*=}" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         -h|--help)
             cat <<'EOF'
-Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
+Usage: sudo ./install.sh [--profile=8gb|10gb] [--mclk-ndiv=N] [--no-iommu] [--no-gen2-service]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
+  --mclk-ndiv=N   Set HBM PLL multiplier (30-80); memory clock is N × 27 MHz
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -164,6 +167,24 @@ done
 export CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}"
 export CMPUNLOCKER_GPU_INVENTORY="$(printf '%s\n' "${GPU_INVENTORY_LINES[@]}")"
 
+if [[ -n "${MCLK_NDIV}" ]]; then
+    if ! [[ "${MCLK_NDIV}" =~ ^[0-9]+$ ]] || [[ "${MCLK_NDIV}" -lt 30 || "${MCLK_NDIV}" -gt 80 ]]; then
+        die "--mclk-ndiv must be an integer between 30 and 80 (got: '${MCLK_NDIV}')"
+    fi
+    ok "MCLK set: NDIV=${MCLK_NDIV} ($((MCLK_NDIV * 27)) MHz) on every unlockable card"
+    if (( COUNT_8GB > 0 && COUNT_10GB > 0 )); then
+        warn "Mixed inventory: the multiplier is compiled in once and applies to both variants"
+        warn "Stock differs by card; verify every GPU after reboot"
+    elif (( COUNT_10GB > 0 )); then
+        info "Stock for 10gb is NDIV 45 (1215 MHz)"
+    else
+        info "Stock for 8gb is NDIV 54 (1458 MHz, 250W VBIOS) or 64 (1728 MHz, 300W VBIOS)"
+    fi
+else
+    info "MCLK overclock disabled (use --mclk-ndiv=N to enable)"
+fi
+export CMPUNLOCKER_MCLK_NDIV="${MCLK_NDIV}"
+
 step "Verifying nvidia-open (${SUPPORTED_VERSIONS_CSV})"
 [[ ${#SUPPORTED_VERSIONS[@]} -gt 0 ]] || die "No supported versions listed in driver/VERSION"
 if [[ -d /sys/firmware/efi ]] && command -v mokutil &>/dev/null; then
@@ -221,6 +242,7 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+CMPUNLOCKER_MCLK_NDIV="${MCLK_NDIV}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -386,6 +408,11 @@ step "Done"
 banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
+if [[ -n "${MCLK_NDIV}" ]]; then
+    echo "MCLK:    NDIV=${MCLK_NDIV} → $((MCLK_NDIV * 27)) MHz"
+else
+    echo "MCLK:    stock (overclock patches not compiled in)"
+fi
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else
@@ -404,6 +431,9 @@ echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
 echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
+if [[ -n "${MCLK_NDIV}" ]]; then
+    echo -e "     Memory clock logs: ${CYAN}sudo dmesg | grep HBMPLL_OC${NC}  (expect NDIV=${MCLK_NDIV})"
+fi
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
 if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"

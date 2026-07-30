@@ -44,6 +44,13 @@ command -v python3 &>/dev/null || die "python3 is required to apply the card mem
 command -v sha256sum &>/dev/null || die "sha256sum is required"
 info "Building against open-gpu-kernel-modules ${VERSION}"
 
+MCLK_NDIV="${CMPUNLOCKER_MCLK_NDIV:-}"
+if [[ -n "${MCLK_NDIV}" ]]; then
+    if ! [[ "${MCLK_NDIV}" =~ ^[0-9]+$ ]] || [[ "${MCLK_NDIV}" -lt 30 || "${MCLK_NDIV}" -gt 80 ]]; then
+        die "CMPUNLOCKER_MCLK_NDIV must be an integer between 30 and 80 (got: '${MCLK_NDIV}')"
+    fi
+fi
+
 PATCH_ORDER=(
     sec2-postbl-plm-ss-cfg.patch
     booter-verify.patch
@@ -56,6 +63,12 @@ PATCH_ORDER=(
     name-string.patch
     bar1-resize-unlock.patch
 )
+if [[ -n "${MCLK_NDIV}" ]]; then
+    PATCH_ORDER+=(
+        0009-mclk-overclock.patch
+        0010-mclk-overclock-post-gsp.patch
+    )
+fi
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
@@ -94,7 +107,7 @@ case "${PROFILE}" in
         ;;
 esac
 
-BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
+BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${MCLK_NDIV:-stock}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
 
 mkdir -p "${BUILD_ROOT}"
 
@@ -130,6 +143,18 @@ else
         patch -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
+
+    if [[ -n "${MCLK_NDIV}" ]]; then
+        TU102_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c"
+        MCLK_GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
+        for f in "${TU102_C}" "${MCLK_GSP_C}"; do
+            [[ -f "${f}" ]] || die "Missing ${f} after applying memory-clock patches"
+            sed -i "s/static const NvU32 newNdiv = [^;]\\+;/static const NvU32 newNdiv = ${MCLK_NDIV};/" "${f}"
+            grep -q "static const NvU32 newNdiv = ${MCLK_NDIV};" "${f}" \
+                || die "NDIV placeholder not substituted in $(basename "${f}") — patch and build.sh are out of sync"
+        done
+        ok "MCLK NDIV set to ${MCLK_NDIV} ($((MCLK_NDIV * 27)) MHz)"
+    fi
 
     GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
     [[ -f "${GSP_C}" ]] || die "Missing ${GSP_C} after patching"
@@ -189,6 +214,7 @@ mkdir -p "${INSTALL_MOD_DIR}"
 printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
+printf '%s\n' "${MCLK_NDIV:-none}" > "${INSTALL_MOD_DIR}/mclk_ndiv"
 if [[ -n "${CMPUNLOCKER_GPU_INVENTORY:-}" ]]; then
     printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY}" > "${INSTALL_MOD_DIR}/gpu_inventory"
     ok "Wrote gpu_inventory ($(echo "${CMPUNLOCKER_GPU_INVENTORY}" | grep -c . || true) GPU(s))"
