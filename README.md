@@ -77,6 +77,9 @@ If a value turns out to be unstable - reinstall without `--mclk-ndiv` (or run `.
 
 For live HBM tuning with [170tune](https://github.com/cachenetics/170tune), install cmpunlocker **without** `--mclk-ndiv`. The FBPA PLL privilege window is still opened, while the driver leaves the stock NDIV untouched. A driver built with `--mclk-ndiv` bakes in a non-stock clock, and 170tune intentionally refuses to tune on top of it.
 
+See [the per-card 170tune HBM validation record](docs/170TUNE_HBM_VALIDATION.md) for a conservative
+deployment example, qualification results, and recovery commands.
+
 ## What Gets Unlocked
 
 | Feature | Status |
