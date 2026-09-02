@@ -73,6 +73,10 @@ Without the flag, patches `0009` and `0010` are not applied at all. The multipli
 
 If a value turns out to be unstable - reinstall without `--mclk-ndiv` (or run `./remove.sh`) from a working state.
 
+#### Using 170tune
+
+For live HBM tuning with [170tune](https://github.com/cachenetics/170tune), install cmpunlocker **without** `--mclk-ndiv`. The FBPA PLL privilege window is still opened, while the driver leaves the stock NDIV untouched. A driver built with `--mclk-ndiv` bakes in a non-stock clock, and 170tune intentionally refuses to tune on top of it.
+
 ## What Gets Unlocked
 
 | Feature | Status |

@@ -38,7 +38,7 @@ mclk_overclock:
     "10gb": 45          # 1215 MHz
     "8gb_250w": 54      # 1458 MHz
     "8gb_300w": 64      # 1728 MHz, VBIOS 92.00.6D.00.0A
-  # PLM addresses opened by patch 0001 (SEC2 Booter) to allow PLL access
+  # PLM addresses opened by sec2-postbl-plm-ss-cfg.patch to allow PLL access
   plm:
     fbpa_pll0: "0x009a3c7c"     # value 0xffffffff
     fbpa_pll1: "0x009a3c80"     # value 0xffffffff

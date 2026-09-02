@@ -40,6 +40,10 @@ sudo ./install.sh --mclk-ndiv=70   # → 1890 MHz
 See the README for the full table
 and the recovery path if a value turns out unstable.
 
+When using `170tune` for live HBM tuning, omit `--mclk-ndiv`. The unlock still
+opens the FBPA PLL register window, and `170tune` requires the driver to leave
+the memory clock at its stock value.
+
 Then perform a cold reboot (full power off, then boot).
 
 ## Uninstall
