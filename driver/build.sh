@@ -55,6 +55,8 @@ PATCH_ORDER=(
     pcie-gen2-probe-retrain.patch
     name-string.patch
     bar1-resize-unlock.patch
+    0009-mclk-overclock.patch
+    0010-mclk-overclock-post-gsp.patch
 )
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
@@ -65,6 +67,7 @@ done
 PATCH_HASH="$(cat "${PATCH_FILES[@]}" | sha256sum | cut -d' ' -f1)"
 
 PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
+MCLK_NDIV="${CMPUNLOCKER_MCLK_NDIV:-}"
 SKIP_GEOMETRY_REWRITE=0
 case "${PROFILE}" in
     8gb|8GB)
@@ -126,10 +129,26 @@ else
     info "Applying unlock patches..."
     cd "${SRC_DIR}"
     for i in "${!PATCH_ORDER[@]}"; do
-        info "  ${PATCH_ORDER[$i]}"
+        base="${PATCH_ORDER[$i]}"
+        if [[ ("${base}" == "0009-mclk-overclock.patch" || "${base}" == "0010-mclk-overclock-post-gsp.patch") && -z "${MCLK_NDIV}" ]]; then
+            warn "Skipping ${base} (no --mclk-ndiv)"
+            continue
+        fi
+        info "  ${base}"
         patch -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
+    if [[ -n "${MCLK_NDIV}" ]]; then
+        if ! [[ "${MCLK_NDIV}" =~ ^[0-9]+$ ]] || [[ "${MCLK_NDIV}" -lt 30 || "${MCLK_NDIV}" -gt 80 ]]; then
+            die "CMPUNLOCKER_MCLK_NDIV must be an integer between 30 and 80 (got: ${MCLK_NDIV})"
+        fi
+        TU102_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c"
+        MCLK_GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
+        sed -i "s/static const NvU32 newNdiv = XX;/static const NvU32 newNdiv = ${MCLK_NDIV};/g" "${TU102_C}" "${MCLK_GSP_C}"
+        grep -q "static const NvU32 newNdiv = ${MCLK_NDIV};" "${TU102_C}" || die "NDIV placeholder not substituted in kernel_gsp_tu102.c - out of sync"
+        grep -q "static const NvU32 newNdiv = ${MCLK_NDIV};" "${MCLK_GSP_C}" || die "NDIV placeholder not substituted in kernel_gsp.c - out of sync"
+        ok "MCLK NDIV set to ${MCLK_NDIV} ($((MCLK_NDIV * 27)) MHz)"
+    fi
 
     GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
     [[ -f "${GSP_C}" ]] || die "Missing ${GSP_C} after patching"
@@ -189,6 +208,7 @@ mkdir -p "${INSTALL_MOD_DIR}"
 printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
+printf '%s\n' "${MCLK_NDIV:-none}" > "${INSTALL_MOD_DIR}/mclk_ndiv"
 if [[ -n "${CMPUNLOCKER_GPU_INVENTORY:-}" ]]; then
     printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY}" > "${INSTALL_MOD_DIR}/gpu_inventory"
     ok "Wrote gpu_inventory ($(echo "${CMPUNLOCKER_GPU_INVENTORY}" | grep -c . || true) GPU(s))"

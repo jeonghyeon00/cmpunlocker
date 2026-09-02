@@ -11,21 +11,26 @@ LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
 PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
+MCLK_NDIV=""
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
+        --mclk-ndiv=*) MCLK_NDIV="${arg#*=}" ;;
         -h|--help)
             cat <<'EOF'
-Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
+Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service] [--mclk-ndiv=N]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
+  --mclk-ndiv=N   HBM memory clock: set PLL multiplier (30-80), N * 27 MHz.
+                  Works on any VBIOS, both 0x20C2 and 0x2082. Without this flag
+                  the overclock patches are not applied at all.
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -163,6 +168,15 @@ for i in "${!GPU_BDFS[@]}"; do
 done
 export CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}"
 export CMPUNLOCKER_GPU_INVENTORY="$(printf '%s\n' "${GPU_INVENTORY_LINES[@]}")"
+if [[ -n "${MCLK_NDIV}" ]]; then
+    if ! [[ "${MCLK_NDIV}" =~ ^[0-9]+$ ]] || [[ "${MCLK_NDIV}" -lt 30 || "${MCLK_NDIV}" -gt 80 ]]; then
+        die "--mclk-ndiv must be between 30 and 80 (got: ${MCLK_NDIV})"
+    fi
+    ok "MCLK set: NDIV=${MCLK_NDIV} ($((MCLK_NDIV * 27)) MHz) on every unlockable card"
+else
+    info "MCLK overclock disabled (use --mclk-ndiv=N to enable)"
+fi
+export CMPUNLOCKER_MCLK_NDIV="${MCLK_NDIV}"
 
 step "Verifying nvidia-open (${SUPPORTED_VERSIONS_CSV})"
 [[ ${#SUPPORTED_VERSIONS[@]} -gt 0 ]] || die "No supported versions listed in driver/VERSION"
@@ -221,6 +235,7 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+CMPUNLOCKER_MCLK_NDIV="${MCLK_NDIV}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -397,6 +412,11 @@ printf "  %-16s %-8s %-8s %s\n" "BDF" "PCI ID" "Variant" "Expect MiB"
 for i in "${!GPU_BDFS[@]}"; do
     printf "  %-16s %-8s %-8s ~%s\n" "${GPU_BDFS[$i]}" "${GPU_DEVIDS[$i]}" "${GPU_PROFILES[$i]}" "${GPU_EXPECTED[$i]}"
 done
+if [[ -n "${MCLK_NDIV}" ]]; then
+    echo "MCLK:    NDIV=${MCLK_NDIV} -> $((MCLK_NDIV * 27)) MHz (baked into driver)"
+else
+    echo "MCLK:    stock (overclock patches not compiled in)"
+fi
 echo ""
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
@@ -404,6 +424,9 @@ echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
 echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
+if [[ -n "${MCLK_NDIV}" ]]; then
+    echo -e "     Memory clock logs: ${CYAN}sudo dmesg | grep HBMPLL_OC${NC}  (expect NDIV=${MCLK_NDIV})"
+fi
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
 if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"

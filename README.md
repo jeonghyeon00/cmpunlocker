@@ -50,6 +50,26 @@ sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 
 Then perform a cold reboot (full power off, then boot).
 
+### HBM Memory Clock
+
+`--mclk-ndiv=N` sets the FBPA PLL multiplier; the resulting clock is `N x 27` MHz. Any VBIOS works, on both `0x20C2` (8GB) and `0x2082` (10GB) — the driver reads the stock NDIV out of the PLL and rewrites only that field, leaving MDIV/PDIV as the VBIOS programmed them.
+
+```bash
+sudo ./install.sh --mclk-ndiv=70   # 1890 MHz
+```
+
+| NDIV | Frequency | Notes                           |
+|------|-----------|---------------------------------|
+| 45   | 1215 MHz  | Stock 10gb                      |
+| 54   | 1458 MHz  | Stock 8gb 250w vbios            |
+| 64   | 1728 MHz  | Stock 8gb 300w vbios            |
+| 70   | 1890 MHz  | Common 8gb OC target            |
+| 73   | 1971 MHz  | Usually only on lucky 8gb cards |
+
+Values below stock downclock the card, which is the way to stabilise a card that fails at stock.
+
+Without the flag, patches `0009` and `0010` are not applied at all. The multiplier is compiled into the modules, so changing it means re-running `install.sh`. With the 3 FBPA_PLL PLMs now opened by this unlock, 170tune's live HBM lever (`hbm_mclk`) can also ladder the clock live with no driver rebuild.
+
 ## What Gets Unlocked
 
 | Feature | Status |
@@ -57,6 +77,7 @@ Then perform a cold reboot (full power off, then boot).
 | Full SM compute throughput (SS0/SS1) | Working ✓ |
 | Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
 | PCIe Gen 2 speeds | Working ✓ |
+| HBM2 memory overclock/downclock | Working ✓ |
 | Full BAR1 Size (64GB) | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
